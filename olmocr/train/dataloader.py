@@ -1194,15 +1194,23 @@ class Tokenizer(PipelineStep):
         assert main_image is not None
 
         # Process inputs using processor
+        # Use return_tensors="pt" because the Qwen2.5-VL fast image processor
+        # only supports PyTorch tensors, then convert to numpy for downstream ops.
         inputs = self.processor(
             text=[text],
             images=[main_image],
             padding=True,
-            return_tensors="np",
+            return_tensors="pt",
         )
+        for _k in inputs:
+            if hasattr(inputs[_k], "numpy"):
+                inputs[_k] = inputs[_k].numpy()
 
         # Get labels by tokenizing the output text
-        labels = self.processor(text=[response], padding=True, return_tensors="np")
+        labels = self.processor(text=[response], padding=True, return_tensors="pt")
+        for _k in labels:
+            if hasattr(labels[_k], "numpy"):
+                labels[_k] = labels[_k].numpy()
 
         # Append end-of-message token to the labels
         end_tokens = self.processor.tokenizer(self.end_of_message_token, add_special_tokens=False)["input_ids"]

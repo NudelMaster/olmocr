@@ -227,7 +227,7 @@ def evaluate_model(
         num_batches = 0
 
         with torch.no_grad():
-            for batch in dataloader:
+            for batch in tqdm(dataloader, desc=f"Evaluating {dataset_name}", unit="batch"):
                 # Skip if batch is None (all samples were filtered out)
                 if batch is None:
                     continue
