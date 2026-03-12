@@ -15,6 +15,7 @@ from olmocr.prompts.anchor import get_anchor_text
 from olmocr.prompts.prompts import (
     PageResponse,
     build_finetuning_prompt,
+    build_no_anchoring_v4_yaml_prompt,
     build_no_anchoring_yaml_prompt,
     build_openai_silver_data_prompt,
 )
@@ -30,7 +31,7 @@ def run_transformers(
     model_name: str = "allenai/olmOCR-7B-0725-FP8",
     temperature: float = 0.1,
     target_longest_image_dim: int = 1024,
-    prompt_template: Literal["full", "finetune", "yaml"] = "yaml",
+    prompt_template: Literal["full", "finetune", "yaml", "yaml_v4"] = "yaml",
     response_template: Literal["plain", "json", "yaml"] = "yaml",
 ) -> str:
     """
@@ -50,10 +51,20 @@ def run_transformers(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     if _cached_model is None:
-        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-            model_name, torch_dtype=torch.bfloat16, device_map="auto", attn_implementation="flash_attention_2"
-        ).eval()
         processor = AutoProcessor.from_pretrained(model_name)
+
+        model_kwargs = {"torch_dtype": torch.bfloat16, "device_map": "auto"}
+        try:
+            model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                model_name,
+                attn_implementation="flash_attention_2",
+                **model_kwargs,
+            ).eval()
+        except ImportError as exc:
+            if "flash_attn" not in str(exc) and "FlashAttention2" not in str(exc):
+                raise
+
+            model = Qwen2_5_VLForConditionalGeneration.from_pretrained(model_name, **model_kwargs).eval()
 
         model = model.to(device)
 
@@ -66,7 +77,9 @@ def run_transformers(
     # Convert the first page of the PDF to a base64-encoded PNG image.
     image_base64 = render_pdf_to_base64png(pdf_path, page_num=page_num, target_longest_image_dim=target_longest_image_dim)
 
-    if prompt_template == "yaml":
+    if prompt_template == "yaml_v4":
+        prompt = build_no_anchoring_v4_yaml_prompt()
+    elif prompt_template == "yaml":
         prompt = build_no_anchoring_yaml_prompt()
     else:
         anchor_text = get_anchor_text(pdf_path, page_num, pdf_engine="pdfreport")
@@ -79,8 +92,8 @@ def run_transformers(
         {
             "role": "user",
             "content": [
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}},
                 {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}},
             ],
         }
     ]

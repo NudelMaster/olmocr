@@ -34,6 +34,7 @@ class Args:
     max_page_error_rate: float = 0.004
     tensor_parallel_size: int = 1
     data_parallel_size: int = 1
+    max_server_ready_timeout: int = 300
 
 
 server_check_lock = asyncio.Lock()
@@ -66,7 +67,7 @@ async def run_olmocr_pipeline(pdf_path: str, page_num: int = 1, model: str = "al
     async with server_check_lock:
         _server_task = None
         try:
-            await asyncio.wait_for(vllm_server_ready(args), timeout=5)
+            await asyncio.wait_for(vllm_server_ready(args), timeout=args.max_server_ready_timeout)
             logger.info("Using existing vllm server")
         except Exception:
             logger.info("Starting new vllm server")

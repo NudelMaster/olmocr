@@ -12,8 +12,20 @@ from olmocr.prompts.anchor import get_anchor_text
 from olmocr.prompts.prompts import (
     PageResponse,
     build_finetuning_prompt,
+    build_no_anchoring_v4_yaml_prompt,
+    build_no_anchoring_yaml_prompt,
     build_openai_silver_data_prompt,
 )
+from olmocr.train.dataloader import FrontMatterParser
+
+
+def _build_completion_url(server: str) -> str:
+    base_url = server.strip().rstrip("/")
+    if not base_url.startswith(("http://", "https://")):
+        base_url = f"http://{base_url}"
+    if not base_url.endswith("/v1"):
+        base_url = f"{base_url}/v1"
+    return f"{base_url}/chat/completions"
 
 
 async def run_server(
@@ -23,8 +35,8 @@ async def run_server(
     model: str = "allenai/olmOCR-7B-0225-preview",
     temperature: float = 0.1,
     target_longest_image_dim: int = 1024,
-    prompt_template: Literal["full", "full_no_document_anchoring", "basic", "finetune"] = "finetune",
-    response_template: Literal["plain", "json"] = "json",
+    prompt_template: Literal["full", "full_no_document_anchoring", "basic", "finetune", "yaml", "yaml_v4"] = "finetune",
+    response_template: Literal["plain", "json", "yaml"] = "json",
 ) -> str:
     """
     Convert page of a PDF file to markdown by calling a request
@@ -40,16 +52,22 @@ async def run_server(
     """
     # Convert the first page of the PDF to a base64-encoded PNG image.
     image_base64 = render_pdf_to_base64png(pdf_path, page_num=page_num, target_longest_image_dim=target_longest_image_dim)
-    anchor_text = get_anchor_text(pdf_path, page_num, pdf_engine="pdfreport")
 
     if prompt_template == "full":
+        anchor_text = get_anchor_text(pdf_path, page_num, pdf_engine="pdfreport")
         prompt = build_openai_silver_data_prompt(anchor_text)
     elif prompt_template == "full_no_document_anchoring":
+        anchor_text = get_anchor_text(pdf_path, page_num, pdf_engine="pdfreport")
         prompt = build_openai_silver_data_prompt_no_document_anchoring(anchor_text)
     elif prompt_template == "finetune":
+        anchor_text = get_anchor_text(pdf_path, page_num, pdf_engine="pdfreport")
         prompt = build_finetuning_prompt(anchor_text)
     elif prompt_template == "basic":
         prompt = build_basic_prompt()
+    elif prompt_template == "yaml":
+        prompt = build_no_anchoring_yaml_prompt()
+    elif prompt_template == "yaml_v4":
+        prompt = build_no_anchoring_v4_yaml_prompt()
     else:
         raise ValueError("Unknown prompt template")
 
@@ -69,7 +87,7 @@ async def run_server(
     }
 
     # Make request and get response using httpx
-    url = f"http://{server}/v1/chat/completions"
+    url = _build_completion_url(server)
 
     async with httpx.AsyncClient(timeout=300) as client:
         response = await client.post(url, json=request)
@@ -85,6 +103,11 @@ async def run_server(
         if response_template == "json":
             page_data = json.loads(choice["message"]["content"])
             page_response = PageResponse(**page_data)
-            return page_response.natural_text
+            return page_response.natural_text if page_response.natural_text else ""
+        elif response_template == "yaml":
+            parser = FrontMatterParser(front_matter_class=PageResponse)
+            front_matter, text = parser._extract_front_matter_and_text(choice["message"]["content"])
+            page_response = parser._parse_front_matter(front_matter, text)
+            return page_response.natural_text if page_response.natural_text else ""
         elif response_template == "plain":
             return choice["message"]["content"]
